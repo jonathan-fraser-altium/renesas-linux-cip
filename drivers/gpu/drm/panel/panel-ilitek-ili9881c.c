@@ -679,16 +679,17 @@ static const struct drm_display_mode ph720128t003_default_mode = {
 };
 
 static const struct drm_display_mode ph720128t005_default_mode = {
-	.clock		= 68000,
+	.clock		= 69000,
+
 	.hdisplay	= 720,
-	.hsync_start = 720 + 120,
-	.hsync_end	= 720 + 120 + 40,
-	.htotal		= 720 + 120 + 40 + 20,
+	.hsync_start	= 720 + 80,
+	.hsync_end	= 720 + 80 + 40,
+	.htotal		= 720 + 80 + 40 + 48,
 
 	.vdisplay	= 1280,
-	.vsync_start = 1280 + 10,
-	.vsync_end	= 1280 + 10 + 2,
-	.vtotal		= 1280 + 10 + 2 + 15,
+	.vsync_start	= 1280 + 12,
+	.vsync_end	= 1280 + 12 + 4,
+	.vtotal		= 1280 + 12 + 4 + 11,
 };
 
 static int ili9881c_get_modes(struct drm_panel *panel,
@@ -834,7 +835,7 @@ static const struct panel_desc ili9881c_t005_panel_desc = {
 	.width_mm = 155,
 	.height_mm = 87,
 	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
-			MIPI_DSI_MODE_VIDEO_HSE | MIPI_DSI_MODE_LPM,
+		      MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_VIDEO_HFP | MIPI_DSI_MODE_VIDEO_HBP,
 	.format = MIPI_DSI_FMT_RGB888,
 	.lanes = 2,
 	.init_code = ili9881c_init_ph720128t005,

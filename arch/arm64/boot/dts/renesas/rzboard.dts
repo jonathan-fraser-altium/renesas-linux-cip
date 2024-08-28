@@ -137,6 +137,25 @@
 		#clock-cells = <0>;
 		clock-frequency = <24000000>;
 	};
+
+	leds {
+		compatible = "gpio-leds";
+		led_red {
+			gpios = <&pinctrl RZG2L_GPIO(8, 1) GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led_green {
+			gpios = <&pinctrl RZG2L_GPIO(17, 2) GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led_blue {
+			gpios = <&pinctrl RZG2L_GPIO(19, 1) GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+			default-state = "on";
+		};
+	};
 };
 
 &extal_clk {

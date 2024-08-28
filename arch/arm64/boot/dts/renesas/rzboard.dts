@@ -156,6 +156,17 @@
 			default-state = "on";
 		};
 	};
+
+	/* RZ/V2L don't support both falling-edge and rising-edge detect */
+	keys {
+		compatible = "gpio-keys";
+		user_key {
+			label = "S2";
+			linux,code = <KEY_1>;
+			debounce-interval = <20>;
+			gpios = <&pinctrl RZG2L_GPIO(39, 0) GPIO_ACTIVE_LOW>;
+		};
+	};
 };
 
 &extal_clk {

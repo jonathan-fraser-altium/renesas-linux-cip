@@ -262,6 +262,21 @@
 	};
 };
 
+&wdt0 {
+	status = "okay";
+	timeout-sec = <60>;
+};
+
+&wdt1 {
+	status = "okay";
+	timeout-sec = <60>;
+};
+
+&wdt2 {
+	status = "okay";
+	timeout-sec = <60>;
+};
+
 &i2c3 {
 	pinctrl-0 = <&i2c3_pins>;
 	pinctrl-names = "default";

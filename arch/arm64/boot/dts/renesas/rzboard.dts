@@ -193,6 +193,58 @@
 			clocks = <&versa3 3>;
 		};
 	};
+
+	hdmi_audio: graph_sound_card {
+		compatible = "audio-graph-card";
+		label = "hdmi-sound-card";
+		dais = <&i2s2_port0>;
+	};
+
+	hdmi_out: hdmi-out {
+		compatible = "hdmi-connector";
+		label = "micro-HDMI";
+		type = "d";
+		status = "disabled";
+
+		port {
+			hdmi_con_out: endpoint {
+				remote-endpoint = <&it6161_out>;
+			};
+		};
+	};
+
+	avt_codec: avt_codec {
+		compatible = "avt,lite-codec-audio";
+		#sound-dai-cells = <1>;
+	};
+
+	lite_audio: sound-lite-codec {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "lite-codec";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,bitclock-inversion;
+		simple-audio-card,frame-master = <&cpu>;
+		simple-audio-card,bitclock-master = <&cpu>;
+		status = "disabled";
+
+		cpu: simple-audio-card,cpu {
+			sound-dai = <&ssi3>;
+			dai-tdm-slot-num = <2>;
+			dai-tdm-slot-width = <16>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&avt_codec 1>;
+		};
+	};
+
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&gpt5 0 40000 0>;
+		brightness-levels = <0 8 32 64 96 128 160 192 224 255>;
+		default-brightness-level = <8>;
+		status = "disabled";
+	};
 };
 
 &extal_clk {
@@ -205,6 +257,16 @@
 
 &audio_clk2{
 	clock-frequency = <12288000>;
+};
+
+&gpu {
+	mali-supply = <&reg_1p1v>;
+};
+
+&drpai0 {
+	memory-region = <&drp_reserved>;
+	linux-memory-region = < &{/memory@48000000} >;
+	status = "okay";
 };
 
 /* for console */
@@ -311,6 +373,59 @@
 	timeout-sec = <60>;
 };
 
+&i2c1 {
+	pinctrl-0 = <&i2c1_pins>;
+	pinctrl-names = "default";
+	clock-frequency = <100000>;
+	status = "okay";
+
+	it6161: hdmi@6c {
+		compatible = "ite,it6161";
+		reg = <0x6c>;
+		status = "disabled";
+
+		it6161-addr-hdmi-tx = <0x4c>;
+		interrupt-parent = <&pinctrl>;
+		interrupts = <RZG2L_GPIO(1, 1) IRQ_TYPE_NONE>;
+
+		switch-gpios = <&pinctrl RZG2L_GPIO(43, 0) GPIO_ACTIVE_LOW>;
+		reset-gpios = <&pinctrl RZG2L_GPIO(19, 0) GPIO_ACTIVE_LOW>;
+
+		#sound-dai-cells = <0>;
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@1 {
+				reg = <1>;
+				it6161_out: endpoint@1 {
+					remote-endpoint = <&hdmi_con_out>;
+				};
+			};
+
+			port@2 {
+				reg = <2>;
+				codec_endpoint: endpoint {
+					remote-endpoint = <&i2s2_cpu_endpoint>;
+				};
+			};
+		};
+	};
+
+	gt911: gt911_ts@14 {
+		compatible = "goodix,gt911";
+		reg = <0x14>;
+
+		interrupt-parent = <&pinctrl>;
+		interrupts = <RZG2L_GPIO(2, 1) IRQ_TYPE_EDGE_FALLING>;
+		irq-gpios = <&pinctrl RZG2L_GPIO(2, 1) GPIO_ACTIVE_HIGH>;   /* DSI_TS_nINT */
+		reset-gpios = <&pinctrl RZG2L_GPIO(43, 1) GPIO_ACTIVE_HIGH>; /* DSI_TS_RST */
+		touchscreen-size-x = <720>;
+		touchscreen-size-y = <1280>;
+		status = "disabled";
+	};
+};
+
 &i2c3 {
 	pinctrl-0 = <&i2c3_pins>;
 	pinctrl-names = "default";
@@ -363,6 +478,69 @@
 	status = "okay";
 };
 
+&ssi1 {
+	pinctrl-0 = <&ssi1_pins>;
+	pinctrl-names = "default";
+	status = "disabled";
+
+	ports {
+		i2s2_port0: port@0 {
+			i2s2_cpu_endpoint: endpoint {
+				remote-endpoint = <&codec_endpoint>;
+				dai-format = "i2s";
+			};
+		};
+	};
+};
+
+&ssi3 {
+	pinctrl-0 = <&ssi3_pins>;
+	pinctrl-names = "default";
+	status = "disabled";
+};
+
+&poegd {
+	status = "okay";
+};
+
+&gpt5 {
+	pinctrl-0 = <&gpt5_pins>;
+	pinctrl-names = "default";
+	channel="channel_A";
+	poeg = <&poegd>;
+	status = "disabled";
+};
+
+&dsi0 {
+	status = "disabled";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	ports {
+		port@1 {
+			dsi0_out: endpoint {
+				remote-endpoint = <&panel_in>;
+				data-lanes = <1 2 3 4>;
+			};
+		};
+	};
+
+	mipi_panel: panel@0 {
+		compatible = "ilitek,ph720128t005";
+		reg = <0>;
+		power-gpios = <&pinctrl RZG2L_GPIO(43, 3) GPIO_ACTIVE_HIGH>;
+		switch-gpios = <&pinctrl RZG2L_GPIO(43, 0) GPIO_ACTIVE_HIGH>;
+		backlight = <&backlight>;
+		status = "disabled";
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi0_out>;
+			};
+		};
+	};
+};
+
 &pinctrl {
 	pinctrl-0 = <&sound_clk_pins>;
 	pinctrl-names = "default";
@@ -382,6 +560,11 @@
 			 <RZG2L_PORT_PINMUX(40, 1, 1)>, /* RxD */
 			 <RZG2L_PORT_PINMUX(41, 0, 1)>, /* CTS# */
 			 <RZG2L_PORT_PINMUX(41, 1, 1)>; /* RTS# */
+	};
+
+	i2c1_pins: i2c1 {
+		pins = "RIIC1_SDA", "RIIC1_SCL";
+		input-enable;
 	};
 
 	i2c3_pins: i2c3 {
@@ -465,5 +648,22 @@
 			 <RZG2L_PORT_PINMUX(45, 1, 1)>, /* RCK */
 			 <RZG2L_PORT_PINMUX(45, 2, 1)>, /* TXD */
 			 <RZG2L_PORT_PINMUX(45, 3, 1)>; /* RXD */
+	};
+
+	ssi1_pins: ssi1 {
+		pinmux = <RZG2L_PORT_PINMUX(46, 0, 1)>, /* BCK */
+			 <RZG2L_PORT_PINMUX(46, 1, 1)>, /* RCK */
+			 <RZG2L_PORT_PINMUX(46, 2, 1)>; /* TXD */
+	};
+
+	ssi3_pins: ssi3 {
+		pinmux = <RZG2L_PORT_PINMUX(31, 0, 5)>, /* BCK */
+			 <RZG2L_PORT_PINMUX(31, 1, 5)>, /* RCK */
+			 <RZG2L_PORT_PINMUX(32, 0, 5)>, /* TXD */
+			 <RZG2L_PORT_PINMUX(32, 1, 5)>; /* RXD */
+	};
+
+	gpt5_pins: gpt5 {
+		pinmux = <RZG2L_PORT_PINMUX(43, 2, 2)>; /* Channel A */
 	};
 };

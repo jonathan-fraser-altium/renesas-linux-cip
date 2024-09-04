@@ -103,6 +103,7 @@ config SND_SOC_ALL_CODECS
 	imply SND_SOC_JZ4740_CODEC
 	imply SND_SOC_JZ4725B_CODEC
 	imply SND_SOC_JZ4770_CODEC
+	imply SND_SOC_LITE_CODEC
 	imply SND_SOC_LM4857
 	imply SND_SOC_LM49453
 	imply SND_SOC_LOCHNAGAR_SC
@@ -818,6 +819,13 @@ config SND_SOC_INNO_RK3036
 config SND_SOC_ISABELLE
 	tristate
 	depends on I2C
+
+config SND_SOC_LITE_CODEC
+	tristate "Lite driver for generic DAC/ADC"
+	help
+	  This type of codecs only have ADC and DAC,
+	  it does not have any control buses such as I2C.
+	  Its digital audio interface is set by the hardware or is uniquely constant
 
 config SND_SOC_LM49453
 	tristate

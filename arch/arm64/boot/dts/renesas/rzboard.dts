@@ -433,6 +433,18 @@
 	timeout-sec = <60>;
 };
 
+&ostm1 {
+	status = "okay";
+};
+
+&ostm2 {
+	status = "disabled";
+};
+
+&mtu3 {
+	status = "okay";
+};
+
 &csi2 {
 	status = "disabled";
 };
@@ -544,6 +556,13 @@
 		reg = <0x12>;
 
 		rtc-enable;
+	};
+
+	rtc: isl1208@6f {
+		compatible = "isil,isl1208";
+		reg = <0x6f>;
+
+		external-oscillator;
 	};
 
 	versa3: versa3@68 {

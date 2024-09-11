@@ -667,6 +667,15 @@
 	};
 };
 
+&adc {
+	pinctrl-0 = <&adc_pins>;
+	pinctrl-names = "default";
+	status = "disabled";
+
+	/delete-node/ channel@6;
+	/delete-node/ channel@7;
+};
+
 &pinctrl {
 	pinctrl-0 = <&sound_clk_pins>;
 	pinctrl-names = "default";
@@ -674,6 +683,10 @@
 	sound_clk_pins: sound_clk {
 		pins = "AUDIO_CLK1", "AUDIO_CLK2";
 		input-enable;
+	};
+
+	adc_pins: adc {
+		pinmux = <RZG2L_PORT_PINMUX(9, 0, 2)>; /* ADC_TRG */
 	};
 
 	scif0_pins: scif0 {

@@ -56,10 +56,10 @@
 /* #define SUPPORT_HBR_AUDIO */
 #ifndef SUPPORT_HBR_AUDIO
 	#define INPUT_SAMPLE_FREQ				AUDFS_48KHz
-	#define INPUT_SAMPLE_FREQ_HZ			48000L
+	#define INPUT_SAMPLE_FREQ_HZ			44100L
 	#define OUTPUT_CHANNEL					2    /* 3,4,5,6,7,8 */
 	#define CNOFIG_INPUT_AUDIO_TYPE			T_AUDIO_LPCM
-	#define CONFIG_INPUT_AUDIO_INTERFACE	SPDIF
+	#define CONFIG_INPUT_AUDIO_INTERFACE	I2S
 	#define I2S_FORMAT						0x01 /* 32bit I2S audio */
 #else /* SUPPORT_HBR_AUDIO */
 	#define INPUT_SAMPLE_FREQ				AUDFS_768KHz
@@ -71,7 +71,7 @@
 #endif
 
 /* MIPI Rx Configuration */
-#define MIPI_RX_LANE_COUNT     2	/* 1~4 */
+#define MIPI_RX_LANE_COUNT     4	/* 1~4 */
 
 #define SUPPORT_AUDI_AudSWL 24
 
@@ -114,6 +114,8 @@
 #define B_TX_DDC_BUS_HANG_MASK (1<<2)
 #define B_TX_RXSEN_MASK (1<<1)
 #define B_TX_HPD_MASK (1<<0)
+
+#define REG_TX_INT_MASK2    0x0A
 
 #define REG_TX_INT_MASK3			0x0B
 #define B_TX_VIDSTABLE_MASK (1<<3)

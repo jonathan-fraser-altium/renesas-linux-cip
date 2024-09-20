@@ -29,13 +29,11 @@
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_print.h>
 #include <video/mipi_display.h>
-#include <linux/dma-mapping.h>
 
 #include "rzg2l_mipi_dsi_regs.h"
 #include "rzg2l_mipi_dsi.h"
 
 #define RZ_G2L_MIPI_DSI_MAX_DATA_LANES	4
-#define DCS_BUF_SIZE			128
 
 struct rzg2l_mipi_dsi {
 	struct device *dev;
@@ -74,9 +72,6 @@ struct rzg2l_mipi_dsi {
 	unsigned long hsfreq;
 
 	bool hsclkmode;	/* 0 for non-continuous and 1 for continuous clock mode */
-
-	dma_addr_t dcs_buf_phys;
-	u8 *dcs_buf_virt;
 };
 
 #define bridge_to_rzg2l_mipi_dsi(b) \
@@ -190,6 +185,9 @@ static int rzg2l_mipi_dsi_startup(struct rzg2l_mipi_dsi *mipi_dsi)
 		timings.ths_trail = 17;
 		timings.ths_zero = 23;
 	}
+
+	if (IS_ENABLED(CONFIG_DRM_I2C_ADV7511))
+		timings.ths_zero = 25;
 
 	dphytim0 = DSIDPHYTIM0_TCLK_MISS(timings.tclk_miss) |
 		   DSIDPHYTIM0_T_INIT(timings.t_init);
@@ -653,7 +651,6 @@ static void rzg2l_mipi_dsi_enable(struct drm_bridge *bridge)
 			ret = drm_panel_enable(mipi_dsi->panel);
 			if (ret < 0)
 				return;
-
 		}
 	}
 }
@@ -835,20 +832,19 @@ static ssize_t rzg2l_mipi_dsi_host_transfer(struct mipi_dsi_host *host,
 	bool is_long = mipi_dsi_packet_format_is_long(msg->type);
 	bool is_need_bta = false;
 	ssize_t err = 0;
-	u32 sqch0dsc00ar = 0;
-	u32 sqch0dsc00br = 0;
-	u32 status;
+	u32 sqch0dsc00ar, sqch0dsc00br, status;
 	unsigned int timeout;
-	unsigned int i;
+	unsigned int count;
+	unsigned int i, j;
+	u32 tx_data, rx_data;
 
 	err = mipi_dsi_create_packet(&packet, msg);
 	if (err < 0)
 		return err;
 
-	if ((packet.payload_length > DCS_BUF_SIZE) || (msg->rx_len > DCS_BUF_SIZE)) {
-		dev_err(mipi_dsi->dev, "Packet payload too large");
+	/* Temporarily support maximum 16 bytes payload and RX data */
+	if ((packet.payload_length > 16) || (msg->rx_len > 16))
 		return -ENOSPC;
-	}
 
 	if ((msg->flags & MIPI_DSI_MSG_REQ_ACK) ||
 	   ((msg->type & MIPI_DSI_GENERIC_READ_REQUEST_0_PARAM ||
@@ -876,15 +872,23 @@ static ssize_t rzg2l_mipi_dsi_host_transfer(struct mipi_dsi_host *host,
 
 	/* Sending non-read packets */
 	if (is_long) {
+		/* Count the amount of TXPPDxR will be used */
+		count = ((packet.payload_length - 1) / 4) + 1;
 		/* Long packet transmission */
 		sqch0dsc00ar |= SQCH0DSC00AR_FMT_LONG;
+		/* Write TX Packet Payload Data */
+		for (i = 0; i < count; i++) {
+			tx_data = 0;
+			for (j = 0; j < 4; j++) {
+				if (packet.payload_length == (4 * i + j))
+					break;
 
-		/* Copy TX Packet Payload Data */
-		memcpy(mipi_dsi->dcs_buf_virt, packet.payload, packet.payload_length);
+				tx_data |= (packet.payload[4 * i + j] << (8 * j));
+			}
 
-		/* Set memory area address */
-		rzg2l_mipi_dsi_write(mipi_dsi->link_mmio, SQCH0DSC00DR, (u32) mipi_dsi->dcs_buf_phys);
-
+			rzg2l_mipi_dsi_write(mipi_dsi->link_mmio, TXPPDxR(i),
+					     tx_data);
+		}
 	} else {
 		/* Short packet transmission */
 		sqch0dsc00ar |= SQCH0DSC00AR_FMT_SHORT;
@@ -900,8 +904,8 @@ static ssize_t rzg2l_mipi_dsi_host_transfer(struct mipi_dsi_host *host,
 
 	rzg2l_mipi_dsi_write(mipi_dsi->link_mmio, SQCH0DSC00AR, sqch0dsc00ar);
 
-	/* Packet Payload Data memory space is used */
-	sqch0dsc00br = SQCH0DSC00BR_DTSEL_MEM_SPACE;
+	/* Packet Payload Data register is used to data select */
+	sqch0dsc00br = SQCH0DSC00BR_DTSEL_PAYLOAD_SIZE;
 	rzg2l_mipi_dsi_write(mipi_dsi->link_mmio, SQCH0DSC00BR, sqch0dsc00br);
 
 	/* Indicate rx result save slot number 0 */
@@ -976,8 +980,18 @@ static ssize_t rzg2l_mipi_dsi_host_transfer(struct mipi_dsi_host *host,
 			case MIPI_DSI_RX_GENERIC_LONG_READ_RESPONSE:
 			case MIPI_DSI_RX_DCS_LONG_READ_RESPONSE:
 				size = (status & (RXRSS0R_DATA0 | RXRSS0R_DATA1));
+				count = ((size - 1) / 4) + 1;
 				/* Read RX Packet Payload Data */
-				memcpy(msg_rx, mipi_dsi->dcs_buf_virt, size);
+				for (i = 0; i < count; i++) {
+					rx_data = rzg2l_mipi_dsi_read(mipi_dsi->link_mmio,
+								      RXPPDxR(i));
+					for (j = 0; j < 4; j++) {
+						if (size == (4 * i + j))
+							break;
+						msg_rx[4 * i + j] = (rx_data >> (8 * j)) & 0xff;
+					}
+				}
+				err = size;
 				break;
 			default:
 				dev_err(mipi_dsi->dev,
@@ -1198,19 +1212,12 @@ static int rzg2l_mipi_dsi_probe(struct platform_device *pdev)
 
 	drm_bridge_add(&mipi_dsi->bridge);
 
-	mipi_dsi->dcs_buf_virt = dma_alloc_coherent(mipi_dsi->host.dev,
-		DCS_BUF_SIZE,
-		&mipi_dsi->dcs_buf_phys,
-		GFP_KERNEL);
-
 	return 0;
 };
 
 static int rzg2l_mipi_dsi_remove(struct platform_device *pdev)
 {
 	struct rzg2l_mipi_dsi *mipi_dsi = platform_get_drvdata(pdev);
-
-	dma_free_coherent(mipi_dsi->host.dev, DCS_BUF_SIZE, mipi_dsi->dcs_buf_virt, mipi_dsi->dcs_buf_phys);
 
 	drm_bridge_remove(&mipi_dsi->bridge);
 

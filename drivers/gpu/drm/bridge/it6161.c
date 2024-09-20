@@ -8,12 +8,15 @@
 #include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 #include <linux/err.h>
-#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <sound/hdmi-codec.h>
 
+#include <linux/gpio/consumer.h>
+
 #include "it6161.h"
+
+/* #define DEBUG_IT6161_DISAPLY_INFO */
 
 #define AUX_WAIT_TIMEOUT_MS 100
 #define DEFAULT_DRV_HOLD 0
@@ -40,7 +43,7 @@
 
 /* PPI */
 #define EnContCK		TRUE
-#define HSSetNum		1
+#define HSSetNum		3
 #define EnDeSkew		TRUE
 #define PPIDbgSel		12
 #define RegIgnrNull		1
@@ -261,8 +264,10 @@ struct it6161 {
 	struct regmap *regmap_hdmi_tx;
 
 	u32 it6161_addr_hdmi_tx;
+	u32 irq;
 
 	struct gpio_desc *enable_gpio;
+	struct gpio_desc *reset_gpio;
 
 	u32 hdmi_tx_pclk;
 	u32 mipi_rx_rclk;
@@ -273,6 +278,7 @@ struct it6161 {
 
 	u8 mipi_rx_lane_count;
 	bool enable_drv_hold;
+	bool enable_max_resolution;
 	u8 hdmi_tx_output_color_space;
 	u8 hdmi_tx_input_color_space;
 	u8 hdmi_tx_mode;
@@ -280,6 +286,7 @@ struct it6161 {
 	bool hdmi_mode;
 	u8 bAudioChannelEnable;
 	u8 bridge_enable;
+	struct platform_device *audio_pdev;
 };
 
 struct it6161 *it6161;
@@ -423,6 +430,17 @@ static inline struct it6161 *connector_to_it6161(struct drm_connector *c)
 static inline struct it6161 *bridge_to_it6161(struct drm_bridge *bridge)
 {
 	return container_of(bridge, struct it6161, bridge);
+}
+
+static void it6161_reset(struct it6161 *it6161)
+{
+	if (!it6161->reset_gpio)
+			return;
+
+	gpiod_set_value(it6161->reset_gpio, 1);
+	usleep_range(2000, 3000);
+	gpiod_set_value(it6161->reset_gpio, 0);
+	usleep_range(3000, 4000);
 }
 
 static void mipi_rx_logic_reset(struct it6161 *it6161)
@@ -1125,11 +1143,13 @@ it6161_bridge_mode_valid(struct drm_bridge *bridge,
 			 const struct drm_display_info *info,
 			 const struct drm_display_mode *mode)
 {
-	if (mode->clock > 108000)
+	bool res = it6161->enable_max_resolution;
+
+	if (mode->clock > 160000)
 		return MODE_CLOCK_HIGH;
 
-	/* TODO, Only 480p60 work with imx8ulp now */
-	if (mode->vdisplay > 480)
+	/* support maximum resolution 720p now */
+	if ((!res) && (mode->vdisplay > 720))
 		return MODE_BAD_VVALUE;
 
 	return MODE_OK;
@@ -1147,6 +1167,7 @@ static void it6161_bridge_mode_set(struct drm_bridge *bridge,
 	DRM_DEV_DEBUG_DRIVER(dev, "adj mode " DRM_MODE_FMT "\n", DRM_MODE_ARG(adjusted_mode));
 
 	memcpy(&it6161->display_mode, mode, sizeof(struct drm_display_mode));
+	it6161->hdmi_tx_pclk = mode->clock;
 
 	polarity = ((adjusted_mode->flags & DRM_MODE_FLAG_PHSYNC) == DRM_MODE_FLAG_PHSYNC) ? 0x01 : 0x00;
 	polarity |= ((adjusted_mode->flags & DRM_MODE_FLAG_PVSYNC) == DRM_MODE_FLAG_PVSYNC) ? 0x02 : 0x00;
@@ -1159,10 +1180,13 @@ static void it6161_bridge_enable(struct drm_bridge *bridge)
 	struct it6161 *it6161 = bridge_to_it6161(bridge);
 	struct device *dev = &it6161->i2c_hdmi_tx->dev;
 
-	DRM_DEV_DEBUG_DRIVER(dev, "start");
+	DRM_DEV_DEBUG_DRIVER(dev, "bridge_enable");
 
 	if (it6161->bridge_enable)
 		return;
+
+	/* disable irq to avoid unnessary interrupter when device reset */
+	disable_irq(it6161->irq);
 
 	mipi_rx_init(it6161);
 	hdmi_tx_init(it6161);
@@ -1170,8 +1194,9 @@ static void it6161_bridge_enable(struct drm_bridge *bridge)
 	it6161_mipi_rx_int_mask_enable(it6161);
 	it6161_hdmi_tx_int_mask_enable(it6161);
 
-	it6161->bridge_enable = true;
+	enable_irq(it6161->irq);
 
+	it6161->bridge_enable = true;
 }
 
 static void it6161_bridge_disable(struct drm_bridge *bridge)
@@ -1179,7 +1204,7 @@ static void it6161_bridge_disable(struct drm_bridge *bridge)
 	struct it6161 *it6161 = bridge_to_it6161(bridge);
 	struct device *dev = &it6161->i2c_hdmi_tx->dev;
 
-	DRM_DEV_DEBUG_DRIVER(dev, "start");
+	DRM_DEV_DEBUG_DRIVER(dev, "bridge_disable");
 
 	/* only keep HPD for cabe detect */
 	it6161_mipi_rx_int_mask_disable(it6161);
@@ -1961,6 +1986,184 @@ static int hdmi_tx_avi_infoframe_set(struct it6161 *it6161)
 	return 0;
 }
 
+#ifdef DEBUG_IT6161_DISAPLY_INFO
+void hdmi_tx_show_display_mode(struct it6161 *it6161)
+{
+	struct drm_display_mode *display_mode = &it6161->display_mode;
+	struct device *dev = &it6161->i2c_hdmi_tx->dev;
+
+	DRM_DEV_INFO(dev, "timing name:%s\n", display_mode->name);
+	DRM_DEV_INFO(dev, "clock = %dkHz\n", display_mode->clock);
+	DRM_DEV_INFO(dev, "htotal = %d\n", display_mode->htotal);
+	DRM_DEV_INFO(dev, "hactive = %d\n", display_mode->hdisplay);
+	DRM_DEV_INFO(dev, "hfront_proch = %d\n", display_mode->hsync_start - display_mode->hdisplay);
+	DRM_DEV_INFO(dev, "hsyncw = %d\n", display_mode->hsync_end - display_mode->hsync_start);
+	DRM_DEV_INFO(dev, "hback_porch = %d\n", display_mode->htotal - display_mode->hsync_end);
+
+	DRM_DEV_INFO(dev, "vtotal = %d\n", display_mode->vtotal);
+	DRM_DEV_INFO(dev, "vactive = %d\n", display_mode->vdisplay);
+	DRM_DEV_INFO(dev, "vfront_proch = %d\n", display_mode->vsync_start - display_mode->vdisplay);
+	DRM_DEV_INFO(dev, "vsyncw = %d\n", display_mode->vsync_end - display_mode->vsync_start);
+	DRM_DEV_INFO(dev, "vback_porch = %d\n", display_mode->vtotal - display_mode->vsync_end);
+	DRM_DEV_INFO(dev, "drm_display_mode flags = 0x%04x\n", display_mode->flags);
+}
+
+void mipi_rx_calc_mclk(struct it6161 *it6161)
+{
+	struct device *dev = &it6161->i2c_mipi_rx->dev;
+	u32 i, rddata, sum = 0, mclk, calc_time = 3;
+
+	for (i = 0; i < calc_time; i++) {
+		it6161_mipi_rx_set_bits(it6161, 0x9B, 0x80, 0x80);
+		msleep(5);
+		it6161_mipi_rx_set_bits(it6161, 0x9B, 0x80, 0x00);
+
+		rddata = it6161_mipi_rx_read(it6161, 0x9B) & 0x0F;
+		rddata <<= 8;
+		rddata += it6161_mipi_rx_read(it6161, 0x9A);
+
+		sum += rddata;
+	}
+
+	sum /= calc_time;
+	mclk = it6161->mipi_rx_rclk * 2048 / sum;
+	DRM_DEV_INFO(dev, "MCLK = %d.%03dMHz", mclk / 1000, mclk % 1000);
+}
+
+void mipi_rx_calc_pclk(struct it6161 *it6161)
+{
+	struct device *dev = &it6161->i2c_mipi_rx->dev;
+	u32 rddata, sum = 0, RxPCLK;
+	u8 i;
+
+	for (i = 0; i < 10; i++) {
+		it6161_mipi_rx_set_bits(it6161, 0x99, 0x80, 0x00);
+		msleep(5);
+		it6161_mipi_rx_set_bits(it6161, 0x99, 0x80, 0x80);
+
+		rddata = it6161_mipi_rx_read(it6161, 0x99) & 0x0F;
+		rddata <<= 8;
+		rddata += it6161_mipi_rx_read(it6161, 0x98);
+		sum += rddata;
+	}
+
+	sum /= 10;
+	RxPCLK = it6161->mipi_rx_rclk * 2048 / sum;
+	it6161->mipi_rx_pclk = RxPCLK;
+	DRM_DEV_INFO(dev, "RxPCLK = %d.%03dMHz", RxPCLK / 1000, RxPCLK % 1000);
+}
+
+void mipi_rx_show_mrec(struct it6161 *it6161)
+{
+	struct device *dev = &it6161->i2c_mipi_rx->dev;
+	int MHFP, MHSW, MHBP, MHDEW, MHVR2nd, MHBlank;
+	int MVFP, MVSW, MVBP, MVDEW, MVFP2nd, MVTotal;
+
+	MHSW  = it6161_mipi_rx_read(it6161, 0x52);
+	MHSW += (it6161_mipi_rx_read(it6161, 0x53)&0x3F)<<8;
+
+	MHFP  = it6161_mipi_rx_read(it6161, 0x50);
+	MHFP += (it6161_mipi_rx_read(it6161, 0x51)&0x3F)<<8;
+
+	MHBP  = it6161_mipi_rx_read(it6161, 0x54);
+	MHBP += (it6161_mipi_rx_read(it6161, 0x55)&0x3F)<<8;
+
+	MHDEW  = it6161_mipi_rx_read(it6161, 0x56);
+	MHDEW += (it6161_mipi_rx_read(it6161, 0x57)&0x3F)<<8;
+
+	MHVR2nd  = it6161_mipi_rx_read(it6161, 0x58);
+	MHVR2nd += (it6161_mipi_rx_read(it6161, 0x59)&0x3F)<<8;
+
+	MHBlank = MHFP + MHSW + MHBP;
+
+	MVSW  = it6161_mipi_rx_read(it6161, 0x5C);
+	MVSW += (it6161_mipi_rx_read(it6161, 0x5D)&0x3F)<<8;
+
+	MVFP  = it6161_mipi_rx_read(it6161, 0x5A);
+	MVFP += (it6161_mipi_rx_read(it6161, 0x5B)&0x3F)<<8;
+
+	MVBP  = it6161_mipi_rx_read(it6161, 0x5E);
+	MVBP += (it6161_mipi_rx_read(it6161, 0x5F)&0x3F)<<8;
+
+	MVDEW  = it6161_mipi_rx_read(it6161, 0x60);
+	MVDEW += (it6161_mipi_rx_read(it6161, 0x61)&0x3F)<<8;
+
+	MVFP2nd  = it6161_mipi_rx_read(it6161, 0x62);
+	MVFP2nd += (it6161_mipi_rx_read(it6161, 0x63)&0x3F)<<8;
+
+	MVTotal = MVFP + MVSW + MVBP + MVDEW ;
+
+	DRM_DEV_INFO(dev, "MHFP    = %d\n", MHFP);
+	DRM_DEV_INFO(dev, "MHSW    = %d\n", MHSW);
+	DRM_DEV_INFO(dev, "MHBP    = %d\n", MHBP);
+	DRM_DEV_INFO(dev, "MHDEW   = %d\n", MHDEW);
+	DRM_DEV_INFO(dev, "MHVR2nd = %d\n", MHVR2nd);
+	DRM_DEV_INFO(dev, "MHBlank  = %d\n", MHBlank);
+
+	DRM_DEV_INFO(dev, "MVFP    = %d\n", MVFP);
+	DRM_DEV_INFO(dev, "MVSW    = %d\n", MVSW);
+	DRM_DEV_INFO(dev, "MVBP   = %d\n", MVBP);
+	DRM_DEV_INFO(dev, "MVDEW   = %d\n", MVDEW);
+	DRM_DEV_INFO(dev, "MVFP2nd   = %d\n", MVFP2nd);
+	DRM_DEV_INFO(dev, "MVTotal = %d\n", MVTotal);
+}
+
+void mipi_rx_show_prec( struct it6161 *it6161 )
+{
+	struct device *dev = &it6161->i2c_mipi_rx->dev;
+	int PHFP, PHSW, PHBP, PHDEW, PHVR2nd, PHTotal;
+	int PVFP, PVSW, PVBP, PVDEW, PVFP2nd, PVTotal;
+
+	PHFP  = it6161_mipi_rx_read(it6161, 0x30);
+	PHFP += (it6161_mipi_rx_read(it6161, 0x31)&0x3F)<<8;
+
+	PHSW  = it6161_mipi_rx_read(it6161, 0x32);
+	PHSW += (it6161_mipi_rx_read(it6161, 0x33)&0x3F)<<8;
+
+	PHBP  = it6161_mipi_rx_read(it6161, 0x34);
+	PHBP += (it6161_mipi_rx_read(it6161, 0x35)&0x3F)<<8;
+
+	PHDEW  = it6161_mipi_rx_read(it6161, 0x36);
+	PHDEW += (it6161_mipi_rx_read(it6161, 0x37)&0x3F)<<8;
+
+	PHVR2nd  = it6161_mipi_rx_read(it6161, 0x38);
+	PHVR2nd += (it6161_mipi_rx_read(it6161, 0x39)&0x3F)<<8;
+
+	PHTotal = PHFP + PHSW + PHBP + PHDEW ;
+
+	PVFP  = it6161_mipi_rx_read(it6161, 0x3A);
+	PVFP += (it6161_mipi_rx_read(it6161, 0x3B)&0x3F)<<8;
+
+	PVSW  = it6161_mipi_rx_read(it6161, 0x3C);
+	PVSW += (it6161_mipi_rx_read(it6161, 0x3D)&0x3F)<<8;
+
+	PVBP  = it6161_mipi_rx_read(it6161, 0x3E);
+	PVBP += (it6161_mipi_rx_read(it6161, 0x3F)&0x3F)<<8;
+
+	PVDEW  = it6161_mipi_rx_read(it6161, 0x40);
+	PVDEW += (it6161_mipi_rx_read(it6161, 0x41)&0x3F)<<8;
+
+	PVFP2nd  = it6161_mipi_rx_read(it6161, 0x42);
+	PVFP2nd += (it6161_mipi_rx_read(it6161, 0x43)&0x3F)<<8;
+
+	PVTotal = PVFP + PVSW + PVBP + PVDEW ;
+
+	DRM_DEV_INFO(dev, "PHFP    = %d\r\n", PHFP);
+	DRM_DEV_INFO(dev, "PHSW    = %d\r\n", PHSW);
+	DRM_DEV_INFO(dev, "PHBP   = %d\r\n", PHBP);
+	DRM_DEV_INFO(dev, "PHDEW   = %d\r\n", PHDEW);
+	DRM_DEV_INFO(dev, "PHVR2nd   = %d\r\n", PHVR2nd);
+	DRM_DEV_INFO(dev, "PHTotal = %d\r\n", PHTotal);
+
+	DRM_DEV_INFO(dev, "PVFP    = %d\r\n", PVFP);
+	DRM_DEV_INFO(dev, "PVSW    = %d\r\n", PVSW);
+	DRM_DEV_INFO(dev, "PVBP   = %d\r\n", PVBP);
+	DRM_DEV_INFO(dev, "PVDEW   = %d\r\n", PVDEW);
+	DRM_DEV_INFO(dev, "PVFP2nd   = %d\r\n", PVFP2nd);
+	DRM_DEV_INFO(dev, "PVTotal = %d\r\n", PVTotal);
+}
+#endif
+
 static void hdmi_tx_set_output_process(struct it6161 *it6161)
 {
 	struct device *dev = &it6161->i2c_hdmi_tx->dev;
@@ -1968,6 +2171,13 @@ static void hdmi_tx_set_output_process(struct it6161 *it6161)
 	u32 TMDSClock;
 
 	DRM_DEV_DEBUG_DRIVER(dev, "hdmi tx set\n");
+#ifdef DEBUG_IT6161_DISAPLY_INFO
+	hdmi_tx_show_display_mode(it6161);
+	mipi_rx_calc_mclk(it6161);
+	mipi_rx_show_mrec(it6161);
+	mipi_rx_calc_pclk(it6161);
+	mipi_rx_show_prec(it6161);
+#endif
 
 	TMDSClock = it6161->hdmi_tx_pclk * 1000 *
 	    (it6161->source_avi_infoframe.pixel_repeat + 1);
@@ -1975,6 +2185,7 @@ static void hdmi_tx_set_output_process(struct it6161 *it6161)
 	HDMITX_DisableAudioOutput(it6161);
 	hdmi_tx_disable_avi_infoframe(it6161);
 
+	DRM_DEV_DEBUG_DRIVER(dev, "TMDSClock = %d, hdmi_tx_pclk=%03d \n",TMDSClock, it6161->hdmi_tx_pclk);
 	if (TMDSClock > 80000000L)
 		level = PCLK_HIGH;
 	else if (TMDSClock > 20000000L)
@@ -2290,14 +2501,89 @@ static int it6161_parse_dt(struct it6161 *it6161, struct device_node *np)
 	}
 	of_node_put(it6161->host_node);
 
+	if (of_property_read_bool(np,"hdmi-output-1080p")) {
+		it6161->enable_max_resolution = true;
+	} else {
+		it6161->enable_max_resolution = false;
+	}
+
 	return 0;
+}
+
+int it6161_hdmi_hw_params(struct device *dev, void *data,
+			   struct hdmi_codec_daifmt *fmt,
+			   struct hdmi_codec_params *hparms)
+{
+
+	return 0;
+}
+
+static int audio_startup(struct device *dev, void *data)
+{
+
+	return 0;
+}
+
+static void audio_shutdown(struct device *dev, void *data)
+{
+}
+
+static int it6161_hdmi_i2s_get_dai_id(struct snd_soc_component *component,
+					struct device_node *endpoint)
+{
+	struct of_endpoint of_ep;
+	int ret;
+
+	ret = of_graph_parse_endpoint(endpoint, &of_ep);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * HDMI sound should be located as reg = <2>
+	 * Then, it is sound port 0
+	 */
+	if (of_ep.port == 2)
+		return 0;
+
+	return -EINVAL;
+}
+
+static const struct hdmi_codec_ops it6161_codec_ops = {
+	.hw_params	= it6161_hdmi_hw_params,
+	.audio_shutdown = audio_shutdown,
+	.audio_startup	= audio_startup,
+	.get_dai_id	= it6161_hdmi_i2s_get_dai_id,
+};
+
+static const struct hdmi_codec_pdata codec_data = {
+	.ops = &it6161_codec_ops,
+	.max_i2s_channels = 2,
+	.i2s = 1,
+};
+
+int it6161_audio_init(struct device *dev, struct it6161 *it6161)
+{
+	it6161->audio_pdev = platform_device_register_data(dev,
+					"hdmi-audio-codec",
+					PLATFORM_DEVID_AUTO,
+					&codec_data,
+					sizeof(codec_data));
+	return PTR_ERR_OR_ZERO(it6161->audio_pdev);
+}
+
+void it6161_audio_exit(struct it6161 *it6161)
+{
+	if (it6161->audio_pdev) {
+		platform_device_unregister(it6161->audio_pdev);
+		it6161->audio_pdev = NULL;
+	}
 }
 
 static int it6161_i2c_probe(struct i2c_client *i2c_mipi_rx,
 			    const struct i2c_device_id *id)
 {
 	struct device *dev = &i2c_mipi_rx->dev;
-	int err, intp_irq;
+	int err;
 
 	it6161 = devm_kzalloc(dev, sizeof(*it6161), GFP_KERNEL);
 	if (!it6161)
@@ -2307,6 +2593,22 @@ static int it6161_i2c_probe(struct i2c_client *i2c_mipi_rx,
 	mutex_init(&it6161->mode_lock);
 
 	it6161->bridge.of_node = i2c_mipi_rx->dev.of_node;
+
+	/* The enable GPIO is optional, this pin is MIPI switch select input. */
+	it6161->enable_gpio = devm_gpiod_get_optional(dev, "switch", GPIOD_OUT_HIGH);
+	if (IS_ERR_OR_NULL(it6161->enable_gpio)) {
+		DRM_DEV_INFO(dev, "No switch enable GPIO");
+	} else {
+		gpiod_set_value_cansleep(it6161->enable_gpio, 1);
+	}
+
+	/* The reset GPIO is optional. */
+	it6161->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR_OR_NULL(it6161->reset_gpio))  {
+		DRM_DEV_ERROR(dev, "Failed to retrieve/request reset gpio");
+		return PTR_ERR(it6161->reset_gpio);
+	}
+	it6161_reset(it6161);
 
 	it6161_parse_dt(it6161, dev->of_node);
 	it6161->regmap_mipi_rx = devm_regmap_init_i2c(i2c_mipi_rx, &it6161_mipi_rx_bridge_regmap_config);
@@ -2327,24 +2629,17 @@ static int it6161_i2c_probe(struct i2c_client *i2c_mipi_rx,
 	if (!it6161_check_device_ready(it6161))
 		return -ENODEV;
 
-	/* The enable GPIO is optional. */
-	it6161->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
-	if (IS_ERR(it6161->enable_gpio))
-		DRM_DEV_INFO(dev, "No enable GPIO");
-	else
-		gpiod_set_value_cansleep(it6161->enable_gpio, 1);
-
 	it6161->enable_drv_hold = DEFAULT_DRV_HOLD;
 	it6161_set_interrupts_active_level(HIGH);
 
-	intp_irq = i2c_mipi_rx->irq;
+	it6161->irq = i2c_mipi_rx->irq;
 
-	if (!intp_irq) {
+	if (!it6161->irq) {
 		DRM_DEV_ERROR(dev, "it6112 failed to get INTP IRQ");
 		return -ENODEV;
 	}
 
-	err = devm_request_threaded_irq(&i2c_mipi_rx->dev, intp_irq, NULL,
+	err = devm_request_threaded_irq(&i2c_mipi_rx->dev, it6161->irq, NULL,
 					it6161_intp_threaded_handler,
 					IRQF_TRIGGER_HIGH | IRQF_ONESHOT, "it6161-intp", it6161);
 	if (err) {
@@ -2365,6 +2660,10 @@ static int it6161_i2c_probe(struct i2c_client *i2c_mipi_rx,
 	if (err)
 		return err;
 
+	err = it6161_audio_init(dev, it6161);
+	if (err)
+		return err;
+
 	return 0;
 }
 
@@ -2375,6 +2674,9 @@ static int it6161_remove(struct i2c_client *i2c_mipi_rx)
 	drm_connector_unregister(&it6161->connector);
 	drm_connector_cleanup(&it6161->connector);
 	drm_bridge_remove(&it6161->bridge);
+
+	it6161_audio_exit(it6161);
+
 	return 0;
 }
 

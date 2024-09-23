@@ -11,3 +11,4 @@ dtb-y += rzboard-ov5640.dtbo
 dtb-y += rzboard-imx219.dtbo
 dtb-y += rzboard-adc.dtbo
 dtb-y += rzboard-cm33.dtbo
+dtb-y += rzboard-can.dtbo

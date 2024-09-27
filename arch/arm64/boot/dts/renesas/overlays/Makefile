@@ -13,4 +13,5 @@ dtb-y += rzboard-adc.dtbo
 dtb-y += rzboard-cm33.dtbo
 dtb-y += rzboard-can.dtbo
 dtb-y += rzboard-ext-i2c.dtbo
-
+dtb-y += rzboard-ext-spi.dtbo
+dtb-y += rzboard-ext-uart2.dtbo

@@ -15,3 +15,4 @@ dtb-y += rzboard-can.dtbo
 dtb-y += rzboard-ext-i2c.dtbo
 dtb-y += rzboard-ext-spi.dtbo
 dtb-y += rzboard-ext-uart2.dtbo
+dtb-y += rzboard-imx219.dtbo

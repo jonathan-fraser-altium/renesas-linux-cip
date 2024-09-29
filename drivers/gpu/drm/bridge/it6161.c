@@ -1186,7 +1186,7 @@ static void it6161_bridge_enable(struct drm_bridge *bridge)
 		return;
 
 	/* disable irq to avoid unnessary interrupter when device reset */
-	disable_irq(it6161->irq);
+	//disable_irq(it6161->irq);
 
 	mipi_rx_init(it6161);
 	hdmi_tx_init(it6161);
@@ -1194,7 +1194,7 @@ static void it6161_bridge_enable(struct drm_bridge *bridge)
 	it6161_mipi_rx_int_mask_enable(it6161);
 	it6161_hdmi_tx_int_mask_enable(it6161);
 
-	enable_irq(it6161->irq);
+	//enable_irq(it6161->irq);
 
 	it6161->bridge_enable = true;
 }

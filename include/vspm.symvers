@@ -1,0 +1,5 @@
+0x00000000	vspm_get_status	/home/binaryblade/yocto/v2l/yocto_rzboard/build/tmp/work/rzboard-poky-linux/kernel-module-vspm/1.0-r0/git/vspm-module/files/vspm/drv/vspm	EXPORT_SYMBOL	
+0x00000000	vspm_quit_driver	/home/binaryblade/yocto/v2l/yocto_rzboard/build/tmp/work/rzboard-poky-linux/kernel-module-vspm/1.0-r0/git/vspm-module/files/vspm/drv/vspm	EXPORT_SYMBOL	
+0x00000000	vspm_cancel_job	/home/binaryblade/yocto/v2l/yocto_rzboard/build/tmp/work/rzboard-poky-linux/kernel-module-vspm/1.0-r0/git/vspm-module/files/vspm/drv/vspm	EXPORT_SYMBOL	
+0x00000000	vspm_entry_job	/home/binaryblade/yocto/v2l/yocto_rzboard/build/tmp/work/rzboard-poky-linux/kernel-module-vspm/1.0-r0/git/vspm-module/files/vspm/drv/vspm	EXPORT_SYMBOL	
+0x00000000	vspm_init_driver	/home/binaryblade/yocto/v2l/yocto_rzboard/build/tmp/work/rzboard-poky-linux/kernel-module-vspm/1.0-r0/git/vspm-module/files/vspm/drv/vspm	EXPORT_SYMBOL	
